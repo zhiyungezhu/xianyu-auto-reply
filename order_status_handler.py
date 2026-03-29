@@ -749,9 +749,9 @@ class OrderStatusHandler:
                 status_text = self.status_mapping.get(new_status, new_status)
                 logger.info(f'[{msg_time}] 【{cookie_id}】{send_message}，订单 {order_id} 状态已更新为{status_text}')
                 
-                # 如果订单已完成或已发货，触发自动重新上架
-                if new_status in ['completed', 'shipped']:
-                    logger.info(f'[{msg_time}] 【{cookie_id}】订单 {order_id} 状态为{status_text}，准备自动重新上架商品')
+                # 如果订单已付款（售出），触发自动重新上架
+                if new_status == 'pending_ship':
+                    logger.info(f'[{msg_time}] 【{cookie_id}】订单 {order_id} 已售出（买家已付款），准备自动重新上架商品')
                     # 异步触发重新上架（不阻塞当前流程）
                     asyncio.create_task(self._trigger_auto_relist(order_id, cookie_id))
             else:

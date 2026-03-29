@@ -5096,6 +5096,20 @@ class XianyuLive:
         await ws.send(json.dumps(msg))
 
     async def send_msg(self, ws, cid, toid, text):
+        # 记录到自动回复缓存，用于区分自动回复和手动发送的消息
+        if not hasattr(self, '_recent_auto_replies'):
+            self._recent_auto_replies = {}
+        
+        # 记录当前时间，用于后续判断是否是自动回复
+        self._recent_auto_replies[cid] = time.time()
+        
+        # 清理过期的缓存（5分钟前的记录）
+        current_time = time.time()
+        expired_chats = [chat_id for chat_id, timestamp in self._recent_auto_replies.items() 
+                        if current_time - timestamp > 300]  # 5分钟过期
+        for chat_id in expired_chats:
+            del self._recent_auto_replies[chat_id]
+        
         text = {
             "contentType": 1,
             "text": {
@@ -7429,10 +7443,17 @@ class XianyuLive:
 
             # 判断消息方向
             if send_user_id == self.myid:
-                logger.info(f"[{msg_time}] 【手动发出】 商品({item_id}): {send_message}")
+                logger.info(f"[{msg_time}] 【发出消息】 商品({item_id}): {send_message}")
 
-                # 暂停该chat_id的自动回复10分钟
-                pause_manager.pause_chat(chat_id, self.cookie_id)
+                # 检查是否是自动回复发出的消息（通过检查消息是否在最近发送的自动回复缓存中）
+                # 如果是自动回复，不暂停；如果是手动发送，暂停自动回复
+                is_auto_reply = hasattr(self, '_recent_auto_replies') and chat_id in self._recent_auto_replies
+                
+                if not is_auto_reply:
+                    # 只有手动发送的消息才暂停自动回复
+                    pause_manager.pause_chat(chat_id, self.cookie_id)
+                else:
+                    logger.info(f"[{msg_time}] 【{self.cookie_id}】检测到自动回复发出的消息，不暂停自动回复")
 
                 return
             else:

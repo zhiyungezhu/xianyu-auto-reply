@@ -3225,42 +3225,50 @@ class XianyuSliderStealth:
                             else:
                                 logger.success(f"【{self.pure_user_id}】✅ 滑块验证成功！")
                             
-                            # 等待页面加载和状态更新（第一次等待3秒）
-                            logger.info(f"【{self.pure_user_id}】等待3秒，让页面加载完成...")
-                            time.sleep(3)
+                            # 等待页面加载和状态更新（增加等待时间）
+                            logger.info(f"【{self.pure_user_id}】等待5秒，让页面加载完成...")
+                            time.sleep(5)
                             
-                            # 第一次检查登录状态
-                            login_success = self._check_login_success_by_element(page)
-                            
-                            # 如果第一次没检测到，再等待5秒后重试
-                            if not login_success:
-                                logger.info(f"【{self.pure_user_id}】第一次检测未发现登录状态，等待5秒后重试...")
-                                time.sleep(5)
-                                login_success = self._check_login_success_by_element(page)
-                            
-                            if login_success:
-                                logger.success(f"【{self.pure_user_id}】✅ 滑块验证后登录成功")
+                            # 直接获取所有cookie（不依赖登录状态检测）
+                            logger.info(f"【{self.pure_user_id}】滑块验证完成，直接获取Cookie...")
+                            cookies_dict = {}
+                            try:
+                                cookies_list = context.cookies()
+                                for cookie in cookies_list:
+                                    cookies_dict[cookie.get('name', '')] = cookie.get('value', '')
                                 
-                                # 只有在登录成功后才获取Cookie
-                                cookies_dict = {}
-                                try:
+                                logger.info(f"【{self.pure_user_id}】成功获取Cookie，包含 {len(cookies_dict)} 个字段")
+                                
+                                # 检查是否有x5sec相关的cookie（这是验证成功的关键）
+                                has_x5sec = any('x5sec' in key.lower() for key in cookies_dict.keys())
+                                
+                                if has_x5sec:
+                                    logger.success(f"【{self.pure_user_id}】✅ 获取到x5sec验证cookie，验证成功！")
+                                    return cookies_dict
+                                elif cookies_dict:
+                                    # 有cookie但没有x5sec，可能是验证还在处理中
+                                    logger.warning(f"【{self.pure_user_id}】⚠️ 获取到cookie但没有x5sec，等待3秒后重试...")
+                                    time.sleep(3)
+                                    
+                                    # 重新获取cookie
                                     cookies_list = context.cookies()
+                                    cookies_dict = {}
                                     for cookie in cookies_list:
                                         cookies_dict[cookie.get('name', '')] = cookie.get('value', '')
                                     
-                                    logger.info(f"【{self.pure_user_id}】成功获取Cookie，包含 {len(cookies_dict)} 个字段")
-                                    
-                                    if cookies_dict:
-                                        logger.success("✅ Cookie有效")
+                                    has_x5sec = any('x5sec' in key.lower() for key in cookies_dict.keys())
+                                    if has_x5sec:
+                                        logger.success(f"【{self.pure_user_id}】✅ 重试后获取到x5sec验证cookie！")
                                         return cookies_dict
                                     else:
-                                        logger.error("❌ Cookie为空")
-                                        return None
-                                except Exception as e:
-                                    logger.error(f"【{self.pure_user_id}】获取Cookie失败: {e}")
+                                        # 仍然没有x5sec，但返回所有cookie
+                                        logger.info(f"【{self.pure_user_id}】ℹ️ 返回所有cookie（可能验证已过期）")
+                                        return cookies_dict
+                                else:
+                                    logger.error(f"【{self.pure_user_id}】❌ Cookie为空")
                                     return None
-                            else:
-                                logger.warning(f"【{self.pure_user_id}】⚠️ 滑块验证后登录状态不明确，不获取Cookie")
+                            except Exception as e:
+                                logger.error(f"【{self.pure_user_id}】获取Cookie失败: {e}")
                                 return None
                         else:
                             logger.info(f"【{self.pure_user_id}】未检测到滑块验证")

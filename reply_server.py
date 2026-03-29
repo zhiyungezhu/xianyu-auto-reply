@@ -5553,6 +5553,99 @@ def get_user_orders(current_user: Dict[str, Any] = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"查询订单失败: {str(e)}")
 
 
+@app.post('/api/orders/{order_id}/manual-delivery')
+async def manual_delivery(
+    order_id: str,
+    request: Request,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """手动补发货"""
+    try:
+        from delivery_manager import get_delivery_manager
+        from db_manager import db_manager
+        import aiohttp
+
+        # 获取请求数据
+        data = await request.json()
+        delivery_content = data.get('delivery_content', '').strip()
+
+        if not delivery_content:
+            return {"success": False, "message": "发货内容不能为空"}
+
+        log_with_user('info', f"开始手动补发货，订单ID: {order_id}", current_user)
+
+        # 获取订单信息
+        order_info = db_manager.get_order_by_id(order_id)
+        if not order_info:
+            return {"success": False, "message": "订单不存在"}
+
+        # 检查权限（只能操作自己的订单）
+        user_cookies = db_manager.get_all_cookies(current_user['user_id'])
+        if order_info.get('cookie_id') not in user_cookies:
+            raise HTTPException(status_code=403, detail="无权操作此订单")
+
+        cookie_id = order_info.get('cookie_id')
+        cookie_info = db_manager.get_cookie_by_id(cookie_id)
+
+        if not cookie_info:
+            return {"success": False, "message": "无法获取账号信息"}
+
+        cookies_str = cookie_info.get('value')
+        if not cookies_str:
+            return {"success": False, "message": "账号Cookie为空"}
+
+        # 创建aiohttp会话并执行发货
+        async with aiohttp.ClientSession() as session:
+            delivery_manager = get_delivery_manager(session, cookies_str, cookie_id)
+            result = await delivery_manager.manual_delivery(
+                order_id=order_id,
+                delivery_content=delivery_content,
+                buyer_id=order_info.get('buyer_id'),
+                item_id=order_info.get('item_id')
+            )
+
+        if result.get('success'):
+            log_with_user('info', f"手动补发货成功，订单ID: {order_id}", current_user)
+        else:
+            log_with_user('error', f"手动补发货失败，订单ID: {order_id}, 错误: {result.get('message')}", current_user)
+
+        return result
+
+    except Exception as e:
+        log_with_user('error', f"手动补发货接口错误: {str(e)}", current_user)
+        raise HTTPException(status_code=500, detail=f"手动补发货失败: {str(e)}")
+
+
+@app.get('/api/orders/{order_id}')
+def get_order_detail(
+    order_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """获取订单详情"""
+    try:
+        from db_manager import db_manager
+
+        log_with_user('info', f"查询订单详情: {order_id}", current_user)
+
+        # 获取订单信息
+        order_info = db_manager.get_order_by_id(order_id)
+        if not order_info:
+            raise HTTPException(status_code=404, detail="订单不存在")
+
+        # 检查权限
+        user_cookies = db_manager.get_all_cookies(current_user['user_id'])
+        if order_info.get('cookie_id') not in user_cookies:
+            raise HTTPException(status_code=403, detail="无权查看此订单")
+
+        return {"success": True, "data": order_info}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_with_user('error', f"查询订单详情失败: {str(e)}", current_user)
+        raise HTTPException(status_code=500, detail=f"查询订单详情失败: {str(e)}")
+
+
 # 移除自动启动，由Start.py或手动启动
 # if __name__ == "__main__":
 #     uvicorn.run(app, host="0.0.0.0", port=8080)

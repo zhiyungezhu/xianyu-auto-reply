@@ -8945,6 +8945,7 @@ function displayOrders() {
 function createOrderRow(order) {
     const statusClass = getOrderStatusClass(order.order_status);
     const statusText = getOrderStatusText(order.order_status);
+    const showDeliveryBtn = needsDeliveryButton(order.order_status);
 
     return `
         <tr>
@@ -8989,6 +8990,11 @@ function createOrderRow(order) {
                     <button class="btn btn-outline-primary btn-sm" onclick="showOrderDetail('${order.order_id}')" title="查看详情">
                         <i class="bi bi-eye"></i>
                     </button>
+                    ${showDeliveryBtn ? `
+                    <button class="btn btn-outline-success btn-sm" onclick="showManualDeliveryModal('${order.order_id}')" title="补发货">
+                        <i class="bi bi-box-seam"></i>
+                    </button>
+                    ` : ''}
                     <button class="btn btn-outline-danger btn-sm" onclick="deleteOrder('${order.order_id}')" title="删除">
                         <i class="bi bi-trash"></i>
                     </button>
@@ -9003,9 +9009,12 @@ function getOrderStatusClass(status) {
     const statusMap = {
         'processing': 'bg-warning text-dark',
         'processed': 'bg-info text-white',
+        'shipped': 'bg-primary text-white',
         'completed': 'bg-success text-white',
         'cancelled': 'bg-danger text-white',
-        'unknown': 'bg-secondary text-white'
+        'unknown': 'bg-secondary text-white',
+        'delivery_failed': 'bg-danger text-white',
+        'pending_delivery': 'bg-warning text-dark'
     };
     return statusMap[status] || 'bg-secondary text-white';
 }
@@ -9018,9 +9027,17 @@ function getOrderStatusText(status) {
         'shipped': '已发货',
         'completed': '已完成',
         'cancelled': '已关闭',
-        'unknown': '未知'
+        'unknown': '待发货',
+        'delivery_failed': '发货失败',
+        'pending_delivery': '待发货'
     };
-    return statusMap[status] || '未知';
+    return statusMap[status] || '待发货';
+}
+
+// 检查订单是否需要显示补发货按钮
+function needsDeliveryButton(status) {
+    // 以下状态显示补发货按钮
+    return ['unknown', 'delivery_failed', 'pending_delivery', 'processing'].includes(status);
 }
 
 // 更新订单分页
@@ -9312,6 +9329,126 @@ async function loadItemDetailForOrder(itemId, cookieId) {
                     加载商品详情失败：${error.message}
                 </div>
             `;
+        }
+    }
+}
+
+// 显示手动补发货模态框
+function showManualDeliveryModal(orderId) {
+    const order = allOrdersData.find(o => o.order_id === orderId);
+    if (!order) {
+        showToast('订单不存在', 'warning');
+        return;
+    }
+
+    // 创建模态框内容
+    const modalContent = `
+        <div class="modal fade" id="manualDeliveryModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="bi bi-box-seam me-2"></i>手动补发货
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-info">
+                            <h6>订单信息</h6>
+                            <p class="mb-1"><strong>订单ID:</strong> ${order.order_id}</p>
+                            <p class="mb-1"><strong>买家ID:</strong> ${order.buyer_id || '未知'}</p>
+                            <p class="mb-1"><strong>商品ID:</strong> ${order.item_id || '未知'}</p>
+                            <p class="mb-0"><strong>金额:</strong> ¥${order.amount || '0.00'}</p>
+                        </div>
+                        <div class="mb-3">
+                            <label for="deliveryContent" class="form-label">
+                                <i class="bi bi-chat-left-text me-1"></i>发货内容
+                            </label>
+                            <textarea class="form-control" id="deliveryContent" rows="5" 
+                                placeholder="请输入要发送给买家的内容（卡密、链接、文本等）"></textarea>
+                            <div class="form-text">
+                                <i class="bi bi-info-circle me-1"></i>
+                                内容将直接发送给买家，请确保准确无误
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="button" class="btn btn-success" onclick="submitManualDelivery('${orderId}')">
+                            <i class="bi bi-send me-1"></i>确认发货
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // 移除已存在的模态框
+    const existingModal = document.getElementById('manualDeliveryModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+
+    // 添加新模态框到页面
+    document.body.insertAdjacentHTML('beforeend', modalContent);
+
+    // 显示模态框
+    const modal = new bootstrap.Modal(document.getElementById('manualDeliveryModal'));
+    modal.show();
+}
+
+// 提交手动补发货
+async function submitManualDelivery(orderId) {
+    try {
+        const content = document.getElementById('deliveryContent').value.trim();
+        
+        if (!content) {
+            showToast('请输入发货内容', 'warning');
+            return;
+        }
+
+        const token = localStorage.getItem('auth_token');
+        
+        // 显示加载状态
+        const submitBtn = document.querySelector('#manualDeliveryModal .btn-success');
+        const originalText = submitBtn.innerHTML;
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>发送中...';
+
+        const response = await fetch(`${apiBase}/api/orders/${orderId}/manual-delivery`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                delivery_content: content
+            })
+        });
+
+        const result = await response.json();
+
+        // 关闭模态框
+        const modal = bootstrap.Modal.getInstance(document.getElementById('manualDeliveryModal'));
+        modal.hide();
+
+        if (result.success) {
+            showToast('补发货成功！', 'success');
+            // 刷新订单列表
+            await refreshOrdersData();
+        } else {
+            showToast(`补发货失败: ${result.message}`, 'danger');
+        }
+
+    } catch (error) {
+        console.error('手动补发货失败:', error);
+        showToast('手动补发货失败，请检查网络连接', 'danger');
+        
+        // 恢复按钮状态
+        const submitBtn = document.querySelector('#manualDeliveryModal .btn-success');
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="bi bi-send me-1"></i>确认发货';
         }
     }
 }

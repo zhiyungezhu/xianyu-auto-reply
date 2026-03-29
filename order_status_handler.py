@@ -278,8 +278,11 @@ class OrderStatusHandler:
                             order_status=new_status,
                             cookie_id=cookie_id
                         )
-                        logger.info(f"✅ 订单状态更新成功: {order_id}")
-                        break
+                        if success:
+                            logger.info(f"✅ 订单状态更新成功：{order_id}")
+                            break
+                        else:
+                            logger.warning(f"⚠️ 订单状态更新失败（尝试 {attempt + 1}/{max_retries}）: {order_id}")
                     except Exception as db_e:
                         if attempt == max_retries - 1:
                             logger.error(f"❌ 更新订单状态失败 (尝试 {attempt + 1}/{max_retries}): {str(db_e)}")

@@ -5100,8 +5100,11 @@ class XianyuLive:
         if not hasattr(self, '_recent_auto_replies'):
             self._recent_auto_replies = {}
         
+        # 提取纯chat_id（去掉@goofish后缀），与消息处理中的格式保持一致
+        chat_id_pure = cid.split('@')[0] if '@' in str(cid) else str(cid)
+        
         # 记录当前时间，用于后续判断是否是自动回复
-        self._recent_auto_replies[cid] = time.time()
+        self._recent_auto_replies[chat_id_pure] = time.time()
         
         # 清理过期的缓存（5分钟前的记录）
         current_time = time.time()

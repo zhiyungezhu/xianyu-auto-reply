@@ -1198,40 +1198,46 @@ class XianyuSliderStealth:
             return t
     
     def _generate_physics_trajectory(self, distance: float):
-        """基于物理加速度模型生成轨迹 - 极速模式
+        """基于物理加速度模型生成轨迹 - 人类模拟模式
         
         优化策略：
-        1. 极少轨迹点（5-8步）：快速完成
-        2. 持续加速：一气呵成，不减速
-        3. 确保超调50%以上：保证滑动到位
-        4. 无回退：单向滑动
+        1. 适中轨迹点（15-25步）：模拟人类滑动
+        2. 先加速后减速：更自然的滑动曲线
+        3. 适度超调10-20%：保证滑动到位
+        4. 添加随机停顿：模拟人类犹豫
+        5. 增加Y轴抖动：模拟手部抖动
         """
         trajectory = []
-        # 确保超调100%
-        target_distance = distance * random.uniform(2.0, 2.1)  # 超调100-110%
+        # 适度超调10-20%
+        target_distance = distance * random.uniform(1.10, 1.20)
         
-        # 极少步数（5-8步）
-        steps = random.randint(5, 8)
+        # 适中步数（15-25步）
+        steps = random.randint(15, 25)
         
-        # 极快时间间隔
-        base_delay = random.uniform(0.0002, 0.0005)
+        # 人类化时间间隔（0.01-0.03秒）
+        base_delay = random.uniform(0.01, 0.03)
         
-        # 生成轨迹点 - 直线加速
+        # 生成轨迹点 - 模拟人类滑动
         for i in range(steps):
             progress = (i + 1) / steps
             
-            # 计算当前位置（使用平方加速曲线，越来越快）
-            x = target_distance * (progress ** 1.5)  # 加速曲线
+            # 使用正弦曲线模拟先加速后减速
+            # sin曲线：0->1->0，模拟自然的加速减速过程
+            ease_progress = math.sin(progress * math.pi / 2)
+            x = target_distance * ease_progress
             
-            # 极小Y轴抖动
-            y = random.uniform(0, 2)
+            # 添加Y轴抖动（模拟手部不稳定）
+            y = random.uniform(-3, 3)
             
-            # 极短延迟
-            delay = base_delay * random.uniform(0.9, 1.1)
+            # 随机停顿（模拟人类犹豫）
+            if random.random() < 0.1:  # 10%概率停顿
+                delay = base_delay * random.uniform(2.0, 4.0)
+            else:
+                delay = base_delay * random.uniform(0.8, 1.2)
             
             trajectory.append((x, y, delay))
         
-        logger.info(f"【{self.pure_user_id}】极速模式：{len(trajectory)}步，超调100%+")
+        logger.info(f"【{self.pure_user_id}】人类模拟模式：{len(trajectory)}步，超调10-20%")
         return trajectory
     
     def generate_human_trajectory(self, distance: float):

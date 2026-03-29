@@ -748,6 +748,12 @@ class OrderStatusHandler:
             if success:
                 status_text = self.status_mapping.get(new_status, new_status)
                 logger.info(f'[{msg_time}] 【{cookie_id}】{send_message}，订单 {order_id} 状态已更新为{status_text}')
+                
+                # 如果订单已完成，触发自动重新上架
+                if new_status == 'completed':
+                    logger.info(f'[{msg_time}] 【{cookie_id}】订单 {order_id} 已完成，准备自动重新上架商品')
+                    # 异步触发重新上架（不阻塞当前流程）
+                    asyncio.create_task(self._trigger_auto_relist(order_id, cookie_id))
             else:
                 logger.error(f'[{msg_time}] 【{cookie_id}】{send_message}，但订单 {order_id} 状态更新失败')
             
@@ -1067,6 +1073,65 @@ class OrderStatusHandler:
                         del self._pending_red_reminder_messages[cookie_id]
                 else:
                     logger.error(f"订单 {order_id} ID已提取，但没有找到对应的待处理红色提醒消息")
+    
+    async def _trigger_auto_relist(self, order_id: str, cookie_id: str):
+        """触发自动重新上架
+        
+        Args:
+            order_id: 订单ID
+            cookie_id: Cookie ID
+        """
+        try:
+            logger.info(f"【{cookie_id}】开始执行自动重新上架流程，订单ID: {order_id}")
+            
+            # 延迟执行，避免与订单状态更新冲突
+            await asyncio.sleep(5)
+            
+            # 从数据库获取订单信息
+            from db_manager import db_manager
+            order_info = db_manager.get_order_by_id(order_id)
+            
+            if not order_info:
+                logger.warning(f"【{cookie_id}】无法获取订单 {order_id} 的信息，跳过自动重新上架")
+                return
+            
+            item_id = order_info.get('item_id')
+            if not item_id:
+                logger.warning(f"【{cookie_id}】订单 {order_id} 没有关联的商品ID，跳过自动重新上架")
+                return
+            
+            logger.info(f"【{cookie_id}】订单 {order_id} 关联的商品ID: {item_id}")
+            
+            # 获取cookie信息
+            cookie_info = db_manager.get_cookie_by_id(cookie_id)
+            if not cookie_info:
+                logger.error(f"【{cookie_id}】无法获取账号信息，跳过自动重新上架")
+                return
+            
+            cookies_str = cookie_info.get('value')
+            if not cookies_str:
+                logger.error(f"【{cookie_id}】账号Cookie为空，跳过自动重新上架")
+                return
+            
+            # 导入自动重新上架管理器
+            from auto_relist_manager import get_auto_relist_manager
+            import aiohttp
+            
+            # 创建aiohttp会话
+            async with aiohttp.ClientSession() as session:
+                # 获取管理器实例
+                relist_manager = get_auto_relist_manager(session, cookies_str, cookie_id)
+                
+                # 执行重新上架
+                result = await relist_manager.handle_order_completed(order_id, item_id)
+                
+                if result.get('success'):
+                    logger.info(f"【{cookie_id}】✅ 订单 {order_id} 自动重新上架成功")
+                else:
+                    logger.error(f"【{cookie_id}】❌ 订单 {order_id} 自动重新上架失败: {result.get('message', '未知错误')}")
+                    
+        except Exception as e:
+            logger.error(f"【{cookie_id}】自动重新上架流程执行出错: {str(e)}")
 
 
 # 创建全局实例

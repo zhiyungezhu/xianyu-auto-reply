@@ -300,11 +300,11 @@ class XianyuSliderStealth:
         """检查日期有效性
         
         Returns:
-            bool: 如果当前日期小于 2025-11-30 返回 True，否则返回 False
+            bool: 如果当前日期小于 2027-12-30 返回 True，否则返回 False
         """
         try:
             # 设置截止日期
-            expiry_date = datetime(2025, 12, 30)
+            expiry_date = datetime(2027, 12, 30)
             current_date = datetime.now()
             
             # 计算剩余天数

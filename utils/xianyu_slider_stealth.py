@@ -1774,7 +1774,17 @@ class XianyuSliderStealth:
                 ".nc_scale",
                 ".nc_1_n1t",
                 "[class*='track']",
-                "[class*='scale']"
+                "[class*='scale']",
+                # 新增选择器，适配阿里最新滑块验证
+                ".nc-container .nc_bg",
+                ".nc-container .nc_scale",
+                ".nc_wrapper .nc_bg",
+                ".baxia-dialog .nc-container",
+                "#baxia-dialog-content .nc-container",
+                ".nc-container",
+                ".nc_wrapper",
+                "[id*='nc_']",
+                "[class*='nc_']"
             ]
             
             # 查找滑块轨道（在找到按钮的同一个frame中查找，因为按钮和轨道应该在同一个位置）

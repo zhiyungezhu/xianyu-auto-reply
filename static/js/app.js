@@ -129,6 +129,9 @@ function showSection(sectionName) {
     case 'data-management':  // 【数据管理菜单】
         loadDataManagement();
         break;
+    case 'item-publish':  // 【商品发布管理菜单】
+        initItemPublish();
+        break;
     }
 
     // 如果切换到非日志页面，停止自动刷新
@@ -5654,6 +5657,38 @@ function displayCurrentPageItems() {
             '<span class="badge bg-success">已开启</span>' :
             '<span class="badge bg-secondary">已关闭</span>';
 
+        // 商品状态显示（根据item_status字段，如果没有则默认为未知）
+        const itemStatus = item.item_status || 'unknown';
+        let statusDisplay = '';
+        let publishButtonText = '';
+        let publishButtonClass = '';
+        
+        switch(itemStatus) {
+            case 'published':
+            case 'onsale':
+            case 'selling':
+                statusDisplay = '<span class="badge bg-success">已发布</span>';
+                publishButtonText = '重新发布';
+                publishButtonClass = 'btn-warning';
+                break;
+            case 'unpublished':
+            case 'offsale':
+            case 'sold':
+                statusDisplay = '<span class="badge bg-secondary">已下架</span>';
+                publishButtonText = '重新发布';
+                publishButtonClass = 'btn-info';
+                break;
+            case 'draft':
+                statusDisplay = '<span class="badge bg-warning">草稿</span>';
+                publishButtonText = '发布';
+                publishButtonClass = 'btn-success';
+                break;
+            default:
+                statusDisplay = '<span class="badge bg-light text-dark">未知</span>';
+                publishButtonText = '发布';
+                publishButtonClass = 'btn-info';
+        }
+
         return `
             <tr>
             <td>
@@ -5669,6 +5704,7 @@ function displayCurrentPageItems() {
             <td>${escapeHtml(item.item_price || '未设置')}</td>
             <td>${multiSpecDisplay}</td>
             <td>${multiQuantityDeliveryDisplay}</td>
+            <td>${statusDisplay}</td>
             <td>${formatDateTime(item.updated_at)}</td>
             <td>
                 <div class="btn-group" role="group">
@@ -5683,6 +5719,9 @@ function displayCurrentPageItems() {
                 </button>
                 <button class="btn btn-sm ${isMultiQuantityDelivery ? 'btn-warning' : 'btn-success'}" onclick="toggleItemMultiQuantityDelivery('${escapeHtml(item.cookie_id)}', '${escapeHtml(item.item_id)}', ${!isMultiQuantityDelivery})" title="${isMultiQuantityDelivery ? '关闭多数量发货' : '开启多数量发货'}">
                     <i class="bi ${isMultiQuantityDelivery ? 'bi-box-arrow-down' : 'bi-box-arrow-up'}"></i>
+                </button>
+                <button class="btn btn-sm ${publishButtonClass}" onclick="relistItem('${escapeHtml(item.cookie_id)}', '${escapeHtml(item.item_id)}', '${escapeHtml(item.item_title || item.item_id)}')" title="${publishButtonText}">
+                    <i class="bi bi-box-arrow-up"></i> ${publishButtonText}
                 </button>
                 </div>
             </td>
@@ -6075,6 +6114,37 @@ async function deleteItem(cookieId, itemId, itemTitle) {
     } catch (error) {
     console.error('删除商品信息失败:', error);
     showToast('删除商品信息失败', 'danger');
+    }
+}
+
+// 重新上架商品
+async function relistItem(cookieId, itemId, itemTitle) {
+    try {
+        // 确认上架
+        const confirmed = confirm(`确定要重新上架该商品吗？\n\n商品ID: ${itemId}\n商品标题: ${itemTitle || '未设置'}`);
+        if (!confirmed) {
+            return;
+        }
+
+        showToast('正在重新上架商品，请稍候...', 'info');
+
+        const response = await fetch(`${apiBase}/items/${encodeURIComponent(cookieId)}/${encodeURIComponent(itemId)}/relist`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`
+            }
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            showToast(`商品重新上架成功: ${result.message || ''}`, 'success');
+        } else {
+            const error = await response.text();
+            showToast(`重新上架失败: ${error}`, 'danger');
+        }
+    } catch (error) {
+        console.error('重新上架商品失败:', error);
+        showToast('重新上架商品失败', 'danger');
     }
 }
 
@@ -11958,5 +12028,308 @@ function showAccountFaceVerificationModal(accountId, screenshot) {
 }
 
 // 注：人脸验证弹窗已复用密码登录的 passwordLoginQRModal，不再需要单独的弹窗
+
+// ================================
+// 商品发布管理功能
+// ================================
+
+let itemPublishCurrentPage = 1;
+let itemPublishPageSize = 20;
+let itemPublishTotalItems = 0;
+let itemPublishAllItems = [];
+
+// 初始化商品发布管理
+function initItemPublish() {
+    console.log('初始化商品发布管理...');
+    loadItemPublishCookies();
+    loadItemPublishList();
+}
+
+// 加载Cookie列表
+async function loadItemPublishCookies() {
+    try {
+        const response = await fetch(`${apiBase}/cookies`, {
+            headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        const select = document.getElementById('itemPublishCookieFilter');
+        if (!select) return;
+        
+        select.innerHTML = '<option value="">所有账号</option>';
+        
+        if (data.cookies) {
+            Object.entries(data.cookies).forEach(([id, cookie]) => {
+                const option = document.createElement('option');
+                option.value = id;
+                option.textContent = `${id} (${cookie.nickname || '未命名'})`;
+                select.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('加载Cookie列表失败:', error);
+    }
+}
+
+// 加载商品列表
+async function loadItemPublishList() {
+    try {
+        const cookieFilter = document.getElementById('itemPublishCookieFilter');
+        const statusFilter = document.getElementById('itemPublishStatusFilter');
+        const searchInput = document.getElementById('itemPublishSearchInput');
+        
+        const cookieId = cookieFilter ? cookieFilter.value : '';
+        const status = statusFilter ? statusFilter.value : '';
+        const keyword = searchInput ? searchInput.value.trim() : '';
+        
+        let url = `${apiBase}/items`;
+        if (cookieId) {
+            url = `${apiBase}/items/cookie/${encodeURIComponent(cookieId)}`;
+        }
+        
+        const response = await fetch(url, {
+            headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        
+        if (!response.ok) throw new Error('获取商品列表失败');
+        
+        const data = await response.json();
+        itemPublishAllItems = data.items || [];
+        
+        // 状态筛选
+        if (status) {
+            itemPublishAllItems = itemPublishAllItems.filter(item => {
+                const itemStatus = item.item_status || 'unknown';
+                if (status === 'published') {
+                    return ['published', 'onsale', 'selling'].includes(itemStatus);
+                } else if (status === 'unpublished') {
+                    return ['unpublished', 'offsale', 'sold'].includes(itemStatus);
+                } else if (status === 'draft') {
+                    return itemStatus === 'draft';
+                }
+                return true;
+            });
+        }
+        
+        // 关键词搜索
+        if (keyword) {
+            itemPublishAllItems = itemPublishAllItems.filter(item => 
+                (item.item_title && item.item_title.includes(keyword)) ||
+                (item.item_id && item.item_id.includes(keyword))
+            );
+        }
+        
+        itemPublishTotalItems = itemPublishAllItems.length;
+        itemPublishCurrentPage = 1;
+        renderItemPublishList();
+        
+    } catch (error) {
+        console.error('加载商品列表失败:', error);
+        const tbody = document.getElementById('itemPublishTableBody');
+        if (tbody) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-4">加载失败</td></tr>';
+        }
+    }
+}
+
+// 渲染商品列表
+function renderItemPublishList() {
+    const tbody = document.getElementById('itemPublishTableBody');
+    const totalCount = document.getElementById('itemPublishTotalCount');
+    
+    if (!tbody) return;
+    
+    if (itemPublishAllItems.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">暂无商品数据</td></tr>';
+        if (totalCount) totalCount.textContent = '共 0 条记录';
+        return;
+    }
+    
+    // 分页
+    const start = (itemPublishCurrentPage - 1) * itemPublishPageSize;
+    const end = start + itemPublishPageSize;
+    const pageItems = itemPublishAllItems.slice(start, end);
+    
+    const html = pageItems.map(item => {
+        const status = item.item_status || 'unknown';
+        let statusHtml = '';
+        let actionBtn = '';
+        
+        switch(status) {
+            case 'published':
+            case 'onsale':
+            case 'selling':
+                statusHtml = '<span class="badge bg-success">已发布</span>';
+                actionBtn = `<button class="btn btn-sm btn-warning" onclick="unpublishItem('${item.cookie_id}', '${item.item_id}', '${escapeHtml(item.item_title || '')}')">
+                    <i class="bi bi-box-arrow-down"></i> 下架
+                </button>`;
+                break;
+            case 'unpublished':
+            case 'offsale':
+            case 'sold':
+                statusHtml = '<span class="badge bg-secondary">已下架</span>';
+                actionBtn = `<button class="btn btn-sm btn-success" onclick="publishItem('${item.cookie_id}', '${item.item_id}', '${escapeHtml(item.item_title || '')}')">
+                    <i class="bi bi-box-arrow-up"></i> 重新发布
+                </button>`;
+                break;
+            case 'draft':
+                statusHtml = '<span class="badge bg-warning">草稿</span>';
+                actionBtn = `<button class="btn btn-sm btn-primary" onclick="publishItem('${item.cookie_id}', '${item.item_id}', '${escapeHtml(item.item_title || '')}')">
+                    <i class="bi bi-box-arrow-up"></i> 发布
+                </button>`;
+                break;
+            default:
+                statusHtml = '<span class="badge bg-light text-dark">未知</span>';
+                actionBtn = `<button class="btn btn-sm btn-info" onclick="publishItem('${item.cookie_id}', '${item.item_id}', '${escapeHtml(item.item_title || '')}')">
+                    <i class="bi bi-box-arrow-up"></i> 发布
+                </button>`;
+        }
+        
+        const title = item.item_title || '未设置';
+        const shortTitle = title.length > 25 ? title.substring(0, 25) + '...' : title;
+        const updateTime = item.updated_at ? new Date(item.updated_at).toLocaleString('zh-CN') : '-';
+        
+        return `
+            <tr>
+                <td><input type="checkbox" class="item-publish-checkbox" data-id="${item.item_id}"></td>
+                <td>${item.cookie_id}</td>
+                <td>${item.item_id}</td>
+                <td title="${escapeHtml(title)}">${escapeHtml(shortTitle)}</td>
+                <td>${item.item_price || '-'}</td>
+                <td>${statusHtml}</td>
+                <td>${updateTime}</td>
+                <td>
+                    <div class="btn-group btn-group-sm">
+                        ${actionBtn}
+                        <button class="btn btn-outline-danger" onclick="deleteItemPublish('${item.cookie_id}', '${item.item_id}', '${escapeHtml(title)}')">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+    
+    tbody.innerHTML = html;
+    if (totalCount) totalCount.textContent = `共 ${itemPublishTotalItems} 条记录`;
+    
+    renderItemPublishPagination();
+}
+
+// 渲染分页
+function renderItemPublishPagination() {
+    const pagination = document.getElementById('itemPublishPagination');
+    if (!pagination) return;
+    
+    const totalPages = Math.ceil(itemPublishTotalItems / itemPublishPageSize);
+    
+    if (totalPages <= 1) {
+        pagination.innerHTML = '';
+        return;
+    }
+    
+    let html = '';
+    html += `<li class="page-item ${itemPublishCurrentPage === 1 ? 'disabled' : ''}"><a class="page-link" href="#" onclick="changeItemPublishPage(${itemPublishCurrentPage - 1}); return false;">上一页</a></li>`;
+    
+    for (let i = 1; i <= totalPages; i++) {
+        if (i === 1 || i === totalPages || (i >= itemPublishCurrentPage - 2 && i <= itemPublishCurrentPage + 2)) {
+            html += `<li class="page-item ${i === itemPublishCurrentPage ? 'active' : ''}"><a class="page-link" href="#" onclick="changeItemPublishPage(${i}); return false;">${i}</a></li>`;
+        } else if (i === itemPublishCurrentPage - 3 || i === itemPublishCurrentPage + 3) {
+            html += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+        }
+    }
+    
+    html += `<li class="page-item ${itemPublishCurrentPage === totalPages ? 'disabled' : ''}"><a class="page-link" href="#" onclick="changeItemPublishPage(${itemPublishCurrentPage + 1}); return false;">下一页</a></li>`;
+    pagination.innerHTML = html;
+}
+
+// 切换页面
+function changeItemPublishPage(page) {
+    const totalPages = Math.ceil(itemPublishTotalItems / itemPublishPageSize);
+    if (page < 1 || page > totalPages) return;
+    itemPublishCurrentPage = page;
+    renderItemPublishList();
+}
+
+// 全选/取消全选
+function toggleSelectAllItemPublish() {
+    const selectAll = document.getElementById('selectAllItemPublish');
+    const checkboxes = document.querySelectorAll('.item-publish-checkbox');
+    if (selectAll && checkboxes) {
+        checkboxes.forEach(cb => cb.checked = selectAll.checked);
+    }
+}
+
+// 发布商品
+async function publishItem(cookieId, itemId, itemTitle) {
+    if (!confirm(`确定要发布商品吗？\n\n商品: ${itemTitle || itemId}`)) return;
+    
+    showToast('正在发布商品...', 'info');
+    try {
+        const response = await fetch(`${apiBase}/items/${encodeURIComponent(cookieId)}/${encodeURIComponent(itemId)}/relist`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        
+        if (response.ok) {
+            showToast('商品发布成功', 'success');
+            loadItemPublishList();
+        } else {
+            const error = await response.text();
+            showToast(`发布失败: ${error}`, 'danger');
+        }
+    } catch (error) {
+        showToast('发布失败', 'danger');
+    }
+}
+
+// 下架商品
+async function unpublishItem(cookieId, itemId, itemTitle) {
+    if (!confirm(`确定要下架商品吗？\n\n商品: ${itemTitle || itemId}`)) return;
+    
+    showToast('下架功能需要后端支持，当前仅支持发布/重新发布', 'warning');
+}
+
+// 删除商品
+async function deleteItemPublish(cookieId, itemId, itemTitle) {
+    if (!confirm(`确定要删除商品吗？\n\n商品: ${itemTitle || itemId}\n\n此操作不可撤销！`)) return;
+    
+    try {
+        const response = await fetch(`${apiBase}/items/${encodeURIComponent(cookieId)}/${encodeURIComponent(itemId)}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        
+        if (response.ok) {
+            showToast('删除成功', 'success');
+            loadItemPublishList();
+        } else {
+            const error = await response.text();
+            showToast(`删除失败: ${error}`, 'danger');
+        }
+    } catch (error) {
+        showToast('删除失败', 'danger');
+    }
+}
+
+// 监听页面切换，初始化商品发布管理
+setTimeout(function() {
+    const section = document.getElementById('item-publish-section');
+    if (section) {
+        const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                    if (section.classList.contains('active')) {
+                        console.log('商品发布管理页面已激活');
+                        initItemPublish();
+                    }
+                }
+            });
+        });
+        observer.observe(section, { attributes: true });
+    }
+}, 1000);
 
 

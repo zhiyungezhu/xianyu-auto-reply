@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Form, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -4615,6 +4615,69 @@ async def get_items_by_page(request: dict, _: None = Depends(require_auth)):
     except Exception as e:
         logger.error(f"获取账号商品信息异常: {str(e)}")
         return {"success": False, "message": f"获取商品信息异常: {str(e)}"}
+
+
+# ------------------------- 商品上架接口 -------------------------
+
+@app.post("/items/{cookie_id}/{item_id}/relist")
+async def relist_item(
+    cookie_id: str,
+    item_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """手动重新上架商品
+    
+    Args:
+        cookie_id: Cookie ID
+        item_id: 商品ID
+        current_user: 当前用户
+        
+    Returns:
+        Dict: 操作结果
+    """
+    try:
+        # 检查cookie是否属于当前用户
+        user_id = current_user['user_id']
+        user_cookies = db_manager.get_all_cookies(user_id)
+        
+        if cookie_id not in user_cookies:
+            raise HTTPException(status_code=403, detail="无权限操作该Cookie")
+        
+        # 获取cookie信息
+        cookie_info = db_manager.get_cookie_by_id(cookie_id)
+        if not cookie_info:
+            raise HTTPException(status_code=404, detail="Cookie不存在")
+        
+        cookies_str = cookie_info.get('value')
+        if not cookies_str:
+            raise HTTPException(status_code=400, detail="Cookie值为空")
+        
+        # 导入自动重新上架管理器
+        import aiohttp
+        from auto_relist_manager import get_auto_relist_manager
+        
+        # 创建aiohttp会话并执行重新上架
+        async with aiohttp.ClientSession() as session:
+            relist_manager = get_auto_relist_manager(session, cookies_str, cookie_id)
+            result = await relist_manager.relist_item(item_id)
+            
+            if result.get('success'):
+                logger.info(f"用户 {current_user['username']} 手动重新上架商品成功: {item_id}")
+                return {
+                    "success": True,
+                    "message": "商品重新上架成功",
+                    "item_id": item_id,
+                    "data": result.get('data', {})
+                }
+            else:
+                logger.warning(f"用户 {current_user['username']} 手动重新上架商品失败: {item_id}, {result.get('message')}")
+                raise HTTPException(status_code=400, detail=result.get('message', '重新上架失败'))
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"手动重新上架商品异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"重新上架商品失败: {str(e)}")
 
 
 # ------------------------- 用户设置接口 -------------------------
